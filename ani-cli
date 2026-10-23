@@ -143,7 +143,7 @@ dep_ch_failover() {
 
 cleanup() {
     [ "$player_function" = "android_mpv" ] && : >"/storage/emulated/0/mpv/mpv.config.mp4" 2>/dev/null
-    tput sgr0               # clears colors
+    tput sgr0 2>/dev/null # clears colors
     rm -f "${histfile}.new" # remove temp logfile
 }
 
@@ -477,7 +477,7 @@ play() {
         _range=$(printf "%s\n" "$ep_list" | sed -nE "/^${_start}\$/,/^${_end}\$/p")
         [ -z "$_range" ] && die "Invalid range!"
         for i in $_range; do
-            tput clear
+            tput clear 2>/dev/null
             ep_no=$i
             info "Playing episode $ep_no..."
             [ "$i" = "$_end" ] && unset _range
@@ -690,9 +690,9 @@ case "$source" in
 esac
 
 # moves the cursor up one line and clears that line
-tput cuu1 && tput el
+tput cuu1 2>/dev/null && tput el 2>/dev/null
 # stores the position of cursor
-tput sc
+tput sc 2>/dev/null
 
 # playback & loop
 play
