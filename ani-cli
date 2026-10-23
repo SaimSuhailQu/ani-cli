@@ -1,6 +1,6 @@
 #!/bin/sh
 
-version_number="5.1.6"
+version_number="5.1.6-ish1"
 
 # UI
 
@@ -363,6 +363,61 @@ android_mpv() {
     nohup am start --user 0 -a android.intent.action.VIEW -d "$video_link" -n is.xyz.mpv/.MPVActivity -e "title" "${anime_title} Episode ${ep_no}" $player_extra_flags >/dev/null 2>&1 &
 }
 
+# iSH (iOS) playback.
+# The stream CDN only answers requests that carry the embed page as Referer.
+# mpv gets it via --referrer and desktop VLC via --http-referrer, but the iOS
+# VLC app is opened through the vlc:// scheme, which cannot set headers, so
+# the raw link always fails there (CDN 403, VLC just won't play). Instead a
+# tiny local proxy (ani-cli-proxy.py, python3 stdlib only) runs inside iSH on
+# 127.0.0.1, adds the Referer to every request and rewrites the playlist so
+# segments come through it too; VLC then streams from localhost.
+ish_port="${ANI_CLI_ISH_PORT:-18787}"
+
+b64url() { printf "%s" "$1" | base64 | tr '+/' '-_' | tr -d '=\n'; }
+
+ish_proxy_script() {
+    [ -n "$ANI_CLI_PROXY" ] && [ -f "$ANI_CLI_PROXY" ] && printf "%s" "$ANI_CLI_PROXY" && return 0
+    for _cand in "${0%/*}/ani-cli-proxy.py" "$HOME/.local/share/ani-cli/ani-cli-proxy.py" "./ani-cli-proxy.py"; do
+        [ -f "$_cand" ] && printf "%s" "$_cand" && return 0
+    done
+    return 1
+}
+
+# $1 = video link, $2 = video name
+ish_play() {
+    _proxy="$(ish_proxy_script)"
+    if command -v python3 >/dev/null 2>&1 && [ -n "$_proxy" ]; then
+        if ! $curl_exe -s --max-time 2 "http://127.0.0.1:${ish_port}/health" >/dev/null 2>&1; then
+            nohup python3 "$_proxy" "$ish_port" >/dev/null 2>&1 &
+            sleep 1
+        fi
+        _sub_b64="-"
+        [ -n "$sub_link" ] && _sub_b64="$(b64url "$sub_link")"
+        _aud_b64="-"
+        [ -n "$audio_link" ] && _aud_b64="$(b64url "$audio_link")"
+        _play_url="http://127.0.0.1:${ish_port}/master/$(b64url "$1")/$(b64url "$refr")/${_sub_b64}/${_aud_b64}"
+    else
+        # Fallback without python3: a playlist file with the headers baked in
+        # as EXTVLCOPT lines, which VLC honours when the file is opened from
+        # the Files app. The bare link below still needs the Referer, so
+        # prefer installing python3 (apk add python3).
+        _m3u="$HOME/ani-cli-stream.m3u"
+        {
+            printf "#EXTM3U\n#EXTINF:-1,%s\n" "$2"
+            printf "#EXTVLCOPT:http-referrer=%s\n" "$refr"
+            printf "#EXTVLCOPT:http-user-agent=%s\n" "$agent"
+            printf "%s\n" "$1"
+        } >"$_m3u"
+        _play_url="$1"
+        info "No python3/proxy found: saved $_m3u - open it in VLC from the Files app so the Referer is applied."
+    fi
+    printf "\n~~~~~~~~~~~~~~~~~~~~~~\n~ Tap to open VLC ~\n~~~~~~~~~~~~~~~~~~~~~~\n"
+    printf "\033]8;;vlc://%s\a%s\033]8;;\a\n" "$_play_url" "$_play_url"
+    printf "Not tappable? Copy the link above into VLC > Network Stream.\n"
+    printf "Keep iSH open while watching. Press Enter when done.\n"
+    read -r _done </dev/tty 2>/dev/null || sleep 5
+}
+
 play_episode() {
     [ "$log_episode" = 1 ] && [ "$player_function" != "debug" ] && [ "$player_function" != "download" ] && command -v logger >/dev/null && logger -t ani-cli "${anime_title} ${ep_no}"
     [ -z "$video_link" ] && get_video_link
@@ -399,10 +454,7 @@ play_episode() {
         *yncpla*) nohup $player_function $player_extra_flags "$video_link" -- $skip_flag --referrer="$refr" ${audio_link:+--audio-file="$audio_link"} ${sub_link:+--sub-file="$sub_link"} --force-media-title="${anime_title} Episode ${ep_no}" >/dev/null 2>&1 & ;;
         download) "$player_function" "$video_link" "${anime_title} Episode ${ep_no}" $player_extra_flags ;;
         catt) nohup catt cast $player_extra_flags "$video_link" >/dev/null 2>&1 & ;;
-        iSH)
-            printf "\033]8;;vlc://%s\a~~~~~~~~~~~~~~~~~~~~\n~ Tap to open VLC ~\n~~~~~~~~~~~~~~~~~~~~\033]8;;\a\n" "$video_link"
-            sleep 5
-            ;;
+        iSH) ish_play "$video_link" "${anime_title} Episode ${ep_no}" ;;
         *) nohup $player_function $player_extra_flags "$video_link" >/dev/null 2>&1 & ;;
     esac
     replay="$video_link"
@@ -435,8 +487,9 @@ play() {
         printf "%s" "$ep_list" | grep -q "^$ep_no$" || die "Invalid episode!"
         play_episode
     fi
-    # moves up to stored position and deletes to end
-    [ "$player_function" != "debug" ] && [ "$player_function" != "download" ] && tput rc && tput ed
+    # moves up to stored position and deletes to end (skipped on iSH: the
+    # restore+clear would erase the VLC link before the user can tap it)
+    [ "$player_function" != "debug" ] && [ "$player_function" != "download" ] && [ "$player_function" != "iSH" ] && tput rc && tput ed
 }
 
 # MAIN

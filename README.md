@@ -444,6 +444,49 @@ This can be achieved from NixManager as well, my personal recommendation is to u
 
 </details>
 
+<details><summary><b>iOS (iSH Shell)</b></summary>
+
+Install the dependencies (GNU tools replace the BusyBox ones, `ncurses`
+provides `tput`, and `python3` runs the streaming proxy described below):
+
+```sh
+apk update && apk add curl fzf python3 ncurses grep sed coreutils openssl aria2 ffmpeg patch git
+```
+
+Install ani-cli **together with its proxy** (the two files must stay in the
+same directory):
+
+```sh
+git clone "https://github.com/pystardust/ani-cli.git"
+cd ani-cli
+chmod +x ani-cli ani-cli-proxy.py
+cp ani-cli ani-cli-proxy.py /usr/local/bin/
+```
+
+Then just run `ani-cli <query>` as usual. When you pick an episode, a
+"Tap to open VLC" link appears: tap it and the stream opens in the VLC app.
+
+**Why the proxy?** The stream CDN only answers requests that carry the
+embed page as `Referer`. Desktop players get that header via
+`--referrer`/`--http-referrer`, but the VLC iOS app is launched through the
+`vlc://` scheme, which cannot send headers -- handing it the raw link always
+failed with a CDN 403. So on iSH, ani-cli starts a tiny local proxy
+(`ani-cli-proxy.py`, python3 stdlib only) on `127.0.0.1:18787`, which adds
+the Referer to every request and rewrites the playlist so segments and
+subtitles come through it too. VLC then streams from localhost.
+
+Notes:
+
+- Keep the iSH app open while watching; if iOS suspends iSH, the stream
+  stops. Stop the proxy afterwards with `pkill -f ani-cli-proxy`.
+- If `python3` is missing, ani-cli falls back to saving
+  `~/ani-cli-stream.m3u` (with the Referer baked in as `#EXTVLCOPT` lines);
+  open that file in VLC from the Files app instead.
+- The port can be changed with `ANI_CLI_ISH_PORT`, the proxy path with
+  `ANI_CLI_PROXY`.
+
+</details>
+
 ### Installing from source
 
 *This method works for any unix-like operating system and is a baseline for porting efforts.*
